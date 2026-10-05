@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Marketing Executive Report"
+description = "Board-level marketing visit intelligence from Plantation Report, with time filters, honest period comparisons, account drilldowns and evidence-backed priorities."
+version = "1.0.0"
+id = "artifacts/executive-report"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25534
+
+[services.development]
+run = "pnpm --filter @workspace/executive-report run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/executive-report", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/executive-report/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25534"
+BASE_PATH = "/"
