@@ -58,14 +58,14 @@ function ThumbnailItem({
   };
 
   return (
-    <div className="group relative flex flex-col overflow-hidden rounded-md border border-border/80 bg-muted/30 transition hover:border-primary/50 hover:shadow-sm">
-      <button
-        type="button"
-        onClick={onSelect}
-        className="relative aspect-[4/3] w-full overflow-hidden bg-muted/60 text-left focus:outline-none focus:ring-2 focus:ring-primary/60"
-        title={`View photo ${index + 1} of ${total}`}
-        aria-label={`View photo ${index + 1} of ${total}`}
-      >
+    <button
+      type="button"
+      onClick={onSelect}
+      className="group relative flex flex-col overflow-hidden rounded-md border border-border/80 bg-muted/30 text-left transition hover:border-primary/50 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/60"
+      title={`View photo ${index + 1} of ${total}`}
+      aria-label={`View photo ${index + 1} of ${total}`}
+    >
+      <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted/60">
         {!loaded && !failed && (
           <div className="absolute inset-0 flex items-center justify-center bg-muted/40 animate-pulse text-muted-foreground">
             <Camera className="h-5 w-5 opacity-40" />
@@ -85,30 +85,18 @@ function ThumbnailItem({
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center p-2 text-center text-xs text-muted-foreground">
             <Camera className="mb-1 h-5 w-5 opacity-50" />
-            <span>Drive Photo</span>
+            <span>Photo {index + 1}</span>
           </div>
         )}
 
         <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/15" />
-        <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white shadow-sm">
-          #{index + 1}
-        </span>
-      </button>
-
-      <div className="flex items-center justify-between border-t border-border/60 bg-background/90 px-2 py-1 text-[11px]">
-        <span className="text-muted-foreground truncate max-w-[100px]">Photo {index + 1}</span>
-        <a
-          href={item.driveUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-0.5 text-primary hover:underline"
-          title="Open file in Google Drive"
-        >
-          <span>Drive</span>
-          <ExternalLink className="h-2.5 w-2.5" />
-        </a>
       </div>
-    </div>
+
+      <div className="flex w-full items-center justify-between border-t border-border/60 bg-background/90 px-2 py-1 text-[11px]">
+        <span className="text-muted-foreground truncate font-medium">Photo {index + 1}</span>
+        <span className="text-[10px] text-muted-foreground/80 group-hover:text-primary">Expand</span>
+      </div>
+    </button>
   );
 }
 
@@ -183,18 +171,6 @@ export function PhotoGallery({
                   <div className="text-[11px] text-muted-foreground">
                     {date ? `${date} • ` : ''}Photo {selectedIndex! + 1} of {photos.length}
                   </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <a
-                    href={current.driveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded border border-border bg-background px-2.5 py-1 text-xs font-medium hover:bg-muted"
-                  >
-                    <span>Open in Drive</span>
-                    <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                  </a>
                 </div>
               </div>
 
