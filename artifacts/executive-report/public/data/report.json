@@ -1,0 +1,12 @@
+{
+  "visits": [],
+  "sourceTitle": "PAT Plantation Executive Report",
+  "fetchedAt": "2026-10-06T10:00:00.000Z",
+  "today": "2026-10-06",
+  "timezone": "Asia/Jakarta",
+  "mode": "snapshot",
+  "syncError": "Awaiting initial Google Sheet sync. Ensure the Google Sheet General Access is set to 'Anyone with the link can view' and trigger the GitHub Actions workflow.",
+  "coverageStart": "",
+  "coverageEnd": "",
+  "excludedRows": 0
+}

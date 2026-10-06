@@ -64,9 +64,25 @@ async function main() {
   console.log(`[build-static-data] Fetching metadata for sheet ${SHEET_ID}...`);
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
   const metaUrl = `${base}?fields=properties.title,sheets.properties&key=${encodeURIComponent(API_KEY)}`;
-  const metaRes = await fetch(metaUrl);
+  
+  let metaRes;
+  try {
+    metaRes = await fetch(metaUrl);
+  } catch (netErr) {
+    throw new Error(`Network failure connecting to Google Sheets API: ${netErr.message}`);
+  }
+
   if (!metaRes.ok) {
     const errText = await metaRes.text().catch(() => '');
+    if (metaRes.status === 403 || metaRes.status === 401) {
+      console.error('\n================================================================');
+      console.error('GOOGLE SHEETS PERMISSION ERROR (' + metaRes.status + ')');
+      console.error('An API Key can ONLY access sheets that are shared with link access.');
+      console.error('Please open your Google Sheet:');
+      console.error(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`);
+      console.error('Click "Share" (top right) -> Under "General access" -> change from "Restricted" to "Anyone with the link can view".');
+      console.error('================================================================\n');
+    }
     throw new Error(`Google Sheets metadata request failed (${metaRes.status}): ${errText}`);
   }
 
@@ -93,5 +109,19 @@ async function main() {
 
 main().catch(err => {
   console.error('[build-static-data] Error:', err.message);
-  process.exit(1);
+  // Write an explicit error payload so the frontend can display the reason rather than a blank 404
+  const errorPayload = {
+    visits: [],
+    sourceTitle: 'Plantation Report (Source Restricted)',
+    fetchedAt: new Date().toISOString(),
+    today: today(),
+    timezone: 'Asia/Jakarta',
+    mode: 'snapshot',
+    syncError: `Google Sheets access error: ${err.message}. Ensure the sheet General Access is set to 'Anyone with the link can view'.`,
+    coverageStart: '',
+    coverageEnd: '',
+    excludedRows: 0,
+  };
+  fs.writeFileSync(outFile, JSON.stringify(errorPayload, null, 2), 'utf-8');
+  console.log('[build-static-data] Wrote error payload to report.json so the dashboard can display diagnostic feedback.');
 });
