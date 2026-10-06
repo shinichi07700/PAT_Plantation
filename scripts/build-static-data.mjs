@@ -30,6 +30,41 @@ function today() {
   }).format(new Date());
 }
 
+function parseCsv(text) {
+  const rows = [];
+  let currentRow = [];
+  let currentCell = '';
+  let insideQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentCell += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentCell.trim());
+      currentCell = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') i++;
+      currentRow.push(currentCell.trim());
+      if (currentRow.length > 1 || currentRow[0] !== '') rows.push(currentRow);
+      currentRow = [];
+      currentCell = '';
+    } else {
+      currentCell += char;
+    }
+  }
+  if (currentCell || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    rows.push(currentRow);
+  }
+  return rows;
+}
+
 function buildData(values, title, fetchedAt) {
   const header = values[0] ?? [];
   const indexes = FIELDS.map(key => header.indexOf(key));
@@ -110,6 +145,20 @@ function resolveServiceAccountCreds() {
   return null;
 }
 
+async function fetchFromCsv() {
+  const csvUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
+  const res = await fetch(csvUrl, { redirect: 'follow' });
+  if (!res.ok) {
+    throw new Error(`Google Sheets CSV export failed (${res.status}): ${res.statusText}`);
+  }
+  const text = await res.text();
+  const rows = parseCsv(text);
+  if (!rows || rows.length < 2) {
+    throw new Error('CSV export returned insufficient data.');
+  }
+  return buildData(rows, 'Plantation Report', new Date().toISOString());
+}
+
 async function main() {
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -122,71 +171,61 @@ async function main() {
     console.log('[build-static-data] Service account access token obtained.');
   }
 
-  if (!bearerToken && !API_KEY) {
-    console.log('[build-static-data] Neither GOOGLE_SERVICE_ACCOUNT_KEY nor GOOGLE_API_KEY was provided.');
-    console.log('[build-static-data] Skipping Google Sheets sync.');
-    return;
-  }
-
-  console.log(`[build-static-data] Fetching metadata for sheet ${SHEET_ID}...`);
-  const base = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
-  const headers = {};
-  if (bearerToken) {
-    headers['Authorization'] = `Bearer ${bearerToken}`;
-  }
-
-  const queryParams = new URLSearchParams();
-  if (API_KEY && !bearerToken) {
-    queryParams.set('key', API_KEY);
-  }
-
-  const metaQuery = new URLSearchParams(queryParams);
-  metaQuery.set('fields', 'properties.title,sheets.properties');
-  const metaUrl = `${base}?${metaQuery.toString()}`;
-
-  let metaRes;
-  try {
-    metaRes = await fetch(metaUrl, { headers });
-  } catch (netErr) {
-    throw new Error(`Network failure connecting to Google Sheets API: ${netErr.message}`);
-  }
-
-  if (!metaRes.ok) {
-    const errText = await metaRes.text().catch(() => '');
-    if (metaRes.status === 403 || metaRes.status === 401) {
-      console.error('\n================================================================');
-      console.error(`GOOGLE SHEETS PERMISSION ERROR (${metaRes.status})`);
-      if (creds) {
-        console.error(`Please share the private Google Sheet with your service account email:`);
-        console.error(`👉 ${creds.client_email} (Viewer)`);
-      } else {
-        console.error('An API Key cannot access restricted sheets.');
-        console.error('To keep the sheet restricted, use GOOGLE_SERVICE_ACCOUNT_KEY instead.');
+  // 1. If Service Account or API Key is available, try Google Sheets API v4
+  if (bearerToken || API_KEY) {
+    try {
+      console.log(`[build-static-data] Fetching via Google Sheets API v4 for sheet ${SHEET_ID}...`);
+      const base = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
+      const headers = {};
+      if (bearerToken) {
+        headers['Authorization'] = `Bearer ${bearerToken}`;
       }
-      console.error('================================================================\n');
+
+      const queryParams = new URLSearchParams();
+      if (API_KEY && !bearerToken) {
+        queryParams.set('key', API_KEY);
+      }
+
+      const metaQuery = new URLSearchParams(queryParams);
+      metaQuery.set('fields', 'properties.title,sheets.properties');
+      const metaUrl = `${base}?${metaQuery.toString()}`;
+
+      const metaRes = await fetch(metaUrl, { headers });
+      if (!metaRes.ok) {
+        const errText = await metaRes.text().catch(() => '');
+        throw new Error(`Google Sheets metadata request failed (${metaRes.status}): ${errText}`);
+      }
+
+      const meta = await metaRes.json();
+      const table = meta.sheets?.find(s => s.properties.sheetId === 0)?.properties;
+      if (!table) throw new Error('Tab gid 0 not found in sheet metadata.');
+
+      const size = table.gridProperties?.rowCount || 2000;
+      console.log(`[build-static-data] Fetching values for tab "${table.title}" (up to ${size} rows)...`);
+      const range = `'${table.title.replace(/'/g, "''")}'!A1:L${size}`;
+      const dataUrl = `${base}/values/${encodeURIComponent(range)}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+      const dataRes = await fetch(dataUrl, { headers });
+      if (!dataRes.ok) {
+        const errText = await dataRes.text().catch(() => '');
+        throw new Error(`Google Sheets values request failed (${dataRes.status}): ${errText}`);
+      }
+
+      const data = await dataRes.json();
+      const payload = buildData(data.values ?? [], meta.properties.title, new Date().toISOString());
+
+      fs.writeFileSync(outFile, JSON.stringify(payload, null, 2), 'utf-8');
+      console.log(`[build-static-data] Successfully generated ${outFile} (${payload.visits.length} visits recorded).`);
+      return;
+    } catch (apiErr) {
+      console.warn(`[build-static-data] Google Sheets API v4 attempt failed: ${apiErr.message}`);
+      console.log('[build-static-data] Falling back to direct CSV export...');
     }
-    throw new Error(`Google Sheets metadata request failed (${metaRes.status}): ${errText}`);
   }
 
-  const meta = await metaRes.json();
-  const table = meta.sheets?.find(s => s.properties.sheetId === 0)?.properties;
-  if (!table) throw new Error('Tab gid 0 not found in sheet metadata.');
-
-  const size = table.gridProperties?.rowCount || 1000;
-  console.log(`[build-static-data] Fetching values for tab "${table.title}" (up to ${size} rows)...`);
-  const range = `'${table.title.replace(/'/g, "''")}'!A1:L${size}`;
-  const dataUrl = `${base}/values/${encodeURIComponent(range)}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-  const dataRes = await fetch(dataUrl, { headers });
-  if (!dataRes.ok) {
-    const errText = await dataRes.text().catch(() => '');
-    throw new Error(`Google Sheets values request failed (${dataRes.status}): ${errText}`);
-  }
-
-  const data = await dataRes.json();
-  const payload = buildData(data.values ?? [], meta.properties.title, new Date().toISOString());
-
+  // 2. Direct CSV export fallback
+  const payload = await fetchFromCsv();
   fs.writeFileSync(outFile, JSON.stringify(payload, null, 2), 'utf-8');
-  console.log(`[build-static-data] Successfully generated ${outFile} (${payload.visits.length} visits recorded).`);
+  console.log(`[build-static-data] Successfully generated ${outFile} via CSV export (${payload.visits.length} visits recorded).`);
 }
 
 main().catch(err => {
@@ -204,5 +243,5 @@ main().catch(err => {
     excludedRows: 0,
   };
   fs.writeFileSync(outFile, JSON.stringify(errorPayload, null, 2), 'utf-8');
-  console.log('[build-static-data] Wrote error payload to report.json so the dashboard can display diagnostic feedback.');
+  console.log('[build-static-data] Wrote error payload to report.json.');
 });
