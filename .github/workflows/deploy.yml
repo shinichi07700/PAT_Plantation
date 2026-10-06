@@ -43,6 +43,7 @@ jobs:
 
       - name: Build static report data from Google Sheets
         env:
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           PLANTATION_SHEET_ID: ${{ secrets.PLANTATION_SHEET_ID || '1b-RY5WAl2I68iflXML9JHt70hY9nMhdYbbs0pgpfAVQ' }}
         run: node scripts/build-static-data.mjs

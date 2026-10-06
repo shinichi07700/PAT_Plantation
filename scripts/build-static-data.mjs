@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -9,6 +10,8 @@ const outFile = path.resolve(outDir, 'report.json');
 
 const SHEET_ID = process.env.PLANTATION_SHEET_ID || '1b-RY5WAl2I68iflXML9JHt70hY9nMhdYbbs0pgpfAVQ';
 const API_KEY = process.env.GOOGLE_API_KEY;
+const SERVICE_ACCOUNT_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+const CREDENTIALS_FILE = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
 const FIELDS = [
   'id_trans', 'date_activity', 'sales_name', 'pt_name', 'pt_pic', 'commodity',
@@ -52,22 +55,98 @@ function buildData(values, title, fetchedAt) {
   };
 }
 
+async function getAccessTokenFromServiceAccount(creds) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claim = {
+    iss: creds.client_email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now,
+  };
+
+  const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const unsignedToken = `${b64(header)}.${b64(claim)}`;
+
+  const sign = crypto.createSign('RSA-SHA256');
+  sign.update(unsignedToken);
+  sign.end();
+  const signature = sign.sign(creds.private_key, 'base64url');
+  const jwt = `${unsignedToken}.${signature}`;
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Google OAuth token exchange failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  return data.access_token;
+}
+
+function resolveServiceAccountCreds() {
+  if (SERVICE_ACCOUNT_KEY) {
+    try {
+      if (fs.existsSync(SERVICE_ACCOUNT_KEY)) {
+        return JSON.parse(fs.readFileSync(SERVICE_ACCOUNT_KEY, 'utf-8'));
+      }
+      return JSON.parse(SERVICE_ACCOUNT_KEY);
+    } catch (e) {
+      throw new Error(`Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY: ${e.message}`);
+    }
+  }
+  if (CREDENTIALS_FILE && fs.existsSync(CREDENTIALS_FILE)) {
+    return JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf-8'));
+  }
+  return null;
+}
+
 async function main() {
   fs.mkdirSync(outDir, { recursive: true });
 
-  if (!API_KEY) {
-    console.log('[build-static-data] No GOOGLE_API_KEY environment variable provided.');
-    console.log('[build-static-data] Skipping static Google Sheet fetch.');
+  const creds = resolveServiceAccountCreds();
+  let bearerToken = process.env.GOOGLE_ACCESS_TOKEN;
+
+  if (creds) {
+    console.log(`[build-static-data] Authenticating as service account: ${creds.client_email}...`);
+    bearerToken = await getAccessTokenFromServiceAccount(creds);
+    console.log('[build-static-data] Service account access token obtained.');
+  }
+
+  if (!bearerToken && !API_KEY) {
+    console.log('[build-static-data] Neither GOOGLE_SERVICE_ACCOUNT_KEY nor GOOGLE_API_KEY was provided.');
+    console.log('[build-static-data] Skipping Google Sheets sync.');
     return;
   }
 
   console.log(`[build-static-data] Fetching metadata for sheet ${SHEET_ID}...`);
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
-  const metaUrl = `${base}?fields=properties.title,sheets.properties&key=${encodeURIComponent(API_KEY)}`;
-  
+  const headers = {};
+  if (bearerToken) {
+    headers['Authorization'] = `Bearer ${bearerToken}`;
+  }
+
+  const queryParams = new URLSearchParams();
+  if (API_KEY && !bearerToken) {
+    queryParams.set('key', API_KEY);
+  }
+
+  const metaQuery = new URLSearchParams(queryParams);
+  metaQuery.set('fields', 'properties.title,sheets.properties');
+  const metaUrl = `${base}?${metaQuery.toString()}`;
+
   let metaRes;
   try {
-    metaRes = await fetch(metaUrl);
+    metaRes = await fetch(metaUrl, { headers });
   } catch (netErr) {
     throw new Error(`Network failure connecting to Google Sheets API: ${netErr.message}`);
   }
@@ -76,11 +155,14 @@ async function main() {
     const errText = await metaRes.text().catch(() => '');
     if (metaRes.status === 403 || metaRes.status === 401) {
       console.error('\n================================================================');
-      console.error('GOOGLE SHEETS PERMISSION ERROR (' + metaRes.status + ')');
-      console.error('An API Key can ONLY access sheets that are shared with link access.');
-      console.error('Please open your Google Sheet:');
-      console.error(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`);
-      console.error('Click "Share" (top right) -> Under "General access" -> change from "Restricted" to "Anyone with the link can view".');
+      console.error(`GOOGLE SHEETS PERMISSION ERROR (${metaRes.status})`);
+      if (creds) {
+        console.error(`Please share the private Google Sheet with your service account email:`);
+        console.error(`👉 ${creds.client_email} (Viewer)`);
+      } else {
+        console.error('An API Key cannot access restricted sheets.');
+        console.error('To keep the sheet restricted, use GOOGLE_SERVICE_ACCOUNT_KEY instead.');
+      }
       console.error('================================================================\n');
     }
     throw new Error(`Google Sheets metadata request failed (${metaRes.status}): ${errText}`);
@@ -93,8 +175,8 @@ async function main() {
   const size = table.gridProperties?.rowCount || 1000;
   console.log(`[build-static-data] Fetching values for tab "${table.title}" (up to ${size} rows)...`);
   const range = `'${table.title.replace(/'/g, "''")}'!A1:L${size}`;
-  const dataUrl = `${base}/values/${encodeURIComponent(range)}?key=${encodeURIComponent(API_KEY)}`;
-  const dataRes = await fetch(dataUrl);
+  const dataUrl = `${base}/values/${encodeURIComponent(range)}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+  const dataRes = await fetch(dataUrl, { headers });
   if (!dataRes.ok) {
     const errText = await dataRes.text().catch(() => '');
     throw new Error(`Google Sheets values request failed (${dataRes.status}): ${errText}`);
@@ -109,7 +191,6 @@ async function main() {
 
 main().catch(err => {
   console.error('[build-static-data] Error:', err.message);
-  // Write an explicit error payload so the frontend can display the reason rather than a blank 404
   const errorPayload = {
     visits: [],
     sourceTitle: 'Plantation Report (Source Restricted)',
@@ -117,7 +198,7 @@ main().catch(err => {
     today: today(),
     timezone: 'Asia/Jakarta',
     mode: 'snapshot',
-    syncError: `Google Sheets access error: ${err.message}. Ensure the sheet General Access is set to 'Anyone with the link can view'.`,
+    syncError: `Google Sheets access error: ${err.message}`,
     coverageStart: '',
     coverageEnd: '',
     excludedRows: 0,

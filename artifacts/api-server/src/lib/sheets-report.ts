@@ -47,24 +47,90 @@ function buildData(values: string[][], title: string, fetchedAt: string): Report
   });
 }
 
+import crypto from "node:crypto";
+import fs from "node:fs";
+
+async function getAccessTokenFromServiceAccount(creds: { client_email: string; private_key: string }): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "RS256", typ: "JWT" };
+  const claim = {
+    iss: creds.client_email,
+    scope: "https://www.googleapis.com/auth/spreadsheets.readonly",
+    aud: "https://oauth2.googleapis.com/token",
+    exp: now + 3600,
+    iat: now,
+  };
+
+  const b64 = (obj: object) => Buffer.from(JSON.stringify(obj)).toString("base64url");
+  const unsignedToken = `${b64(header)}.${b64(claim)}`;
+
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(unsignedToken);
+  sign.end();
+  const signature = sign.sign(creds.private_key, "base64url");
+  const jwt = `${unsignedToken}.${signature}`;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Google OAuth token exchange failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json() as { access_token: string };
+  return data.access_token;
+}
+
+function resolveServiceAccountCreds(): { client_email: string; private_key: string } | null {
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (raw) {
+    try {
+      if (fs.existsSync(raw)) {
+        return JSON.parse(fs.readFileSync(raw, "utf-8"));
+      }
+      return JSON.parse(raw);
+    } catch (e: any) {
+      throw new Error(`Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY: ${e.message}`);
+    }
+  }
+  const file = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (file && fs.existsSync(file)) {
+    return JSON.parse(fs.readFileSync(file, "utf-8"));
+  }
+  return null;
+}
+
 async function fetchSource(): Promise<ReportData> {
   const sheetId = SHEET_ID;
-  const apiKey = process.env.GOOGLE_API_KEY;
-  const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
+  const creds = resolveServiceAccountCreds();
+  let bearerToken = process.env.GOOGLE_ACCESS_TOKEN;
 
-  if (!apiKey && !accessToken) {
+  if (creds) {
+    bearerToken = await getAccessTokenFromServiceAccount(creds);
+  }
+
+  const apiKey = process.env.GOOGLE_API_KEY;
+
+  if (!apiKey && !bearerToken) {
     throw new Error(
-      "GOOGLE_API_KEY (or GOOGLE_ACCESS_TOKEN) must be configured in environment variables to fetch from Google Sheets."
+      "GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_API_KEY must be configured in environment variables to fetch from Google Sheets."
     );
   }
 
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`;
   const headers: Record<string, string> = {};
-  if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
+  if (bearerToken) {
+    headers["Authorization"] = `Bearer ${bearerToken}`;
   }
 
-  const keyParam = apiKey ? `key=${encodeURIComponent(apiKey)}` : "";
+  const keyParam = (apiKey && !bearerToken) ? `key=${encodeURIComponent(apiKey)}` : "";
 
   // 1. Fetch metadata
   const metaUrl = `${base}?fields=properties.title,sheets.properties${keyParam ? `&${keyParam}` : ""}`;
