@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Calendar, AlertTriangle } from 'lucide-react';
 import type { ReportData } from '@workspace/api-client-react';
 import { fmtDate, fmtRange, type Analysis } from '@/lib/analytics';
 import { Empty, Panel, stamp } from './shared';
@@ -58,6 +59,144 @@ function SignalList({ title, tone, items, id }: { title: string; tone: string; i
   );
 }
 
+export function ScheduleFollowUpSection({ a, today }: { a: Analysis; today: string }) {
+  const [tab, setTab] = useState<'upcoming' | 'overdue'>('upcoming');
+  const [search, setSearch] = useState('');
+  const [all, setAll] = useState(false);
+
+  const items = tab === 'upcoming' ? a.schedule.upcoming : a.schedule.overdueWithoutReport;
+  const filtered = items.filter(
+    (x) =>
+      x.company.toLowerCase().includes(search.toLowerCase()) ||
+      x.rep.toLowerCase().includes(search.toLowerCase()) ||
+      x.nextAgenda.toLowerCase().includes(search.toLowerCase())
+  );
+  const rows = all ? filtered : filtered.slice(0, 10);
+
+  return (
+    <Panel
+      title="Next-date schedule and follow-up tracking"
+      note={`Cross-referencing scheduled follow-up dates against actual recorded activity as of ${fmtDate(today)}.`}
+      id="schedule-tracking"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setTab('upcoming'); setAll(false); }}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              tab === 'upcoming'
+                ? 'bg-chart-4/15 text-chart-4 border border-chart-4/30'
+                : 'text-muted-foreground hover:bg-muted/50 border border-transparent'
+            }`}
+          >
+            <Calendar className="h-3.5 w-3.5" />
+            <span>Upcoming Schedule ({a.schedule.upcoming.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab('overdue'); setAll(false); }}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              tab === 'overdue'
+                ? 'bg-clay/15 text-clay border border-clay/30'
+                : 'text-muted-foreground hover:bg-muted/50 border border-transparent'
+            }`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" />
+            <span>Overdue / No Follow-Up ({a.schedule.overdueWithoutReport.length})</span>
+          </button>
+        </div>
+
+        <div className="relative min-w-[200px] max-w-xs w-full sm:w-auto">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search account, rep, agenda..."
+            className="w-full rounded border border-border bg-background px-2.5 py-1 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </div>
+      </div>
+
+      <div className="mt-3">
+        {tab === 'upcoming' ? (
+          <p className="text-xs text-muted-foreground mb-3">
+            Planned visits scheduled on or after today ({fmtDate(today)}). Sorted by nearest upcoming date first.
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground mb-3">
+            Accounts where the promised follow-up date has passed, and <strong>no activity report has been submitted yet</strong> on or after that date.
+          </p>
+        )}
+
+        {filtered.length === 0 ? (
+          <Empty id={`empty-${tab}`}>
+            {search ? 'No matches found for your search.' : tab === 'upcoming' ? 'No upcoming visits currently scheduled.' : 'No overdue follow-up gaps detected!'}
+          </Empty>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[840px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <th className="py-2 font-medium">Account</th>
+                  <th className="font-medium">Scheduled Target</th>
+                  <th className="font-medium">Owner (Rep)</th>
+                  <th className="font-medium">Planned Agenda</th>
+                  <th className="font-medium">Last Visit Recorded</th>
+                  <th className="font-medium">Row</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((x, idx) => {
+                  const badge = tab === 'upcoming'
+                    ? (x.daysDiff === 0 ? 'Today' : x.daysDiff === 1 ? 'Tomorrow' : `In ${x.daysDiff} days`)
+                    : `${x.daysDiff} d overdue`;
+                  const badgeClass = tab === 'upcoming'
+                    ? (x.daysDiff <= 3 ? 'bg-chart-4/15 text-chart-4 border-chart-4/30' : 'bg-muted text-foreground/80 border-border')
+                    : 'bg-clay/15 text-clay border-clay/30';
+
+                  return (
+                    <tr key={`${x.company}-${x.nextDate}-${idx}`} className="row-hover border-b border-border/60 align-top">
+                      <td className="py-2.5 pr-3 font-medium">
+                        {x.company}
+                      </td>
+                      <td className="whitespace-nowrap pr-3">
+                        <div className="mono font-semibold text-xs">{fmtDate(x.nextDate)}</div>
+                        <span className={`inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium border ${badgeClass}`}>
+                          {badge}
+                        </span>
+                      </td>
+                      <td className="pr-3 text-xs font-medium">{x.rep}</td>
+                      <td className="max-w-[280px] pr-3 text-[13px] leading-snug" lang="id">
+                        {x.nextAgenda}
+                      </td>
+                      <td className="whitespace-nowrap pr-3">
+                        <div className="mono text-xs">{fmtDate(x.lastVisitDate)}</div>
+                        <div className="text-[11px] text-muted-foreground">{x.lastActivityType}</div>
+                      </td>
+                      <td className="mono text-xs text-muted-foreground">{x.sourceRow}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {filtered.length > 10 && (
+          <button
+            type="button"
+            onClick={() => setAll(!all)}
+            className="mt-3 text-sm text-primary underline underline-offset-4 print:hidden"
+          >
+            {all ? 'Show fewer rows' : `Show all ${filtered.length} records`}
+          </button>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 export function BriefView({ a, data }: { a: Analysis; data: ReportData }) {
   const items: [string, string][] = [
     ['Recorded date span', `${fmtDate(data.coverageStart)} to ${fmtDate(data.coverageEnd)}. Earlier and later dates are unknown, not zero. A date within this span does not guarantee that all visits were logged.`],
@@ -74,6 +213,7 @@ export function BriefView({ a, data }: { a: Analysis; data: ReportData }) {
   return (
     <div className="space-y-4">
       <RecordedExceptionsReview a={a} />
+      <ScheduleFollowUpSection a={a} today={data.today} />
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
         <Panel title="Executive key points" note="Recomputed from the records in the selected window." id="keypoints">
           <ol className="space-y-3" data-testid="list-keypoints">

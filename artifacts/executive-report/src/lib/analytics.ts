@@ -250,6 +250,22 @@ export function recordedExceptions(d: ReportData, period: Period, evidence?: Rep
   };
 }
 
+export interface ScheduledVisitItem {
+  company: string;
+  rep: string;
+  nextDate: string;
+  nextAgenda: string;
+  lastVisitDate: string;
+  lastActivityType: string;
+  daysDiff: number;
+  sourceRow: number;
+}
+
+export interface ScheduleAnalysis {
+  upcoming: ScheduledVisitItem[];
+  overdueWithoutReport: ScheduledVisitItem[];
+}
+
 /* ---------- full analysis ---------- */
 export interface Analysis {
   period: Period; curVisits: Visit[]; prevVisits: Visit[]; m: Metrics; pm: Metrics;
@@ -262,6 +278,7 @@ export interface Analysis {
   keypoints: string[]; recommendations: string[];
   quality: { blankProducts: number; blankNextDate: number; elapsedAccounts: number; mergedVariants: number };
   exceptions: RecordedExceptions;
+  schedule: ScheduleAnalysis;
 }
 
 export function analyze(d: ReportData, sel: Sel, evidence?: ReportingEvidence): Analysis {
@@ -363,5 +380,45 @@ export function analyze(d: ReportData, sel: Sel, evidence?: ReportingEvidence): 
   const exceptions = recordedExceptions(d, period, evidence);
   if (exceptions.accountGaps?.length) rec.unshift(`Confirm visit history for ${exceptions.accountGaps.length} previously recorded accounts with no recorded visit for over 14 days as of ${fmtDate(exceptions.asOf)}. Missing records do not prove inactivity.`);
   if (exceptions.closingGaps?.length) rec.unshift(`Confirm follow-up evidence for ${exceptions.closingGaps.length} accounts whose latest Closing-labelled activity in the window has no later same-account visit recorded by ${fmtDate(exceptions.asOf)}. Plans are not completion evidence.`);
-  return { period, curVisits, prevVisits, m, pm, deltas, trend, monthly, mix, reps, accounts, risks, opps, keypoints: kp, recommendations: rec, exceptions, quality: { blankProducts, blankNextDate, elapsedAccounts, mergedVariants } };
+
+  // schedule & follow-up tracking
+  const scheduleTodayN = toN(d.today);
+  const upcomingSchedule: ScheduledVisitItem[] = [];
+  const overdueSchedule: ScheduledVisitItem[] = [];
+
+  for (const [k, vs] of byAcc) {
+    const sorted = [...vs].sort((a, b) => iso(b.date).localeCompare(iso(a.date)) || b.sourceRow - a.sourceRow);
+    const latest = sorted[0];
+    const nd = iso(latest.nextDate);
+    if (!validDate(nd)) continue;
+    const diff = toN(nd) - scheduleTodayN;
+    const item: ScheduledVisitItem = {
+      company: cleanName(latest.company),
+      rep: latest.salesName || 'Unassigned',
+      nextDate: nd,
+      nextAgenda: latest.nextAgenda || '-',
+      lastVisitDate: latest.date,
+      lastActivityType: latest.activityType || 'Visit',
+      daysDiff: Math.abs(diff),
+      sourceRow: latest.sourceRow,
+    };
+    if (diff >= 0) {
+      upcomingSchedule.push(item);
+    } else {
+      const hasFollowUp = vs.some((v) => iso(v.date) >= nd);
+      if (!hasFollowUp) {
+        overdueSchedule.push(item);
+      }
+    }
+  }
+
+  upcomingSchedule.sort((a, b) => a.nextDate.localeCompare(b.nextDate) || a.daysDiff - b.daysDiff);
+  overdueSchedule.sort((a, b) => b.daysDiff - a.daysDiff || a.nextDate.localeCompare(b.nextDate));
+
+  const schedule: ScheduleAnalysis = {
+    upcoming: upcomingSchedule,
+    overdueWithoutReport: overdueSchedule,
+  };
+
+  return { period, curVisits, prevVisits, m, pm, deltas, trend, monthly, mix, reps, accounts, risks, opps, keypoints: kp, recommendations: rec, exceptions, schedule, quality: { blankProducts, blankNextDate, elapsedAccounts, mergedVariants } };
 }
