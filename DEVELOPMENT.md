@@ -4,12 +4,16 @@ An executive and board report on marketing company visits from the connected Pla
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — run the API server (default port 5000)
+- `pnpm --filter @workspace/executive-report run dev` — run the dashboard frontend (default port 3000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/db run push` — push DB schema changes (when Postgres is used)
+- Required env:
+  - `GOOGLE_API_KEY` — Google Cloud API key with access to Google Sheets API
+  - `PLANTATION_SHEET_ID` (optional, defaults to `1b-RY5WAl2I68iflXML9JHt70hY9nMhdYbbs0pgpfAVQ`)
+  - `DATABASE_URL` (optional) — PostgreSQL connection string for caching report data
 
 ## Stack
 

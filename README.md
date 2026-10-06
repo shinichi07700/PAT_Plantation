@@ -4,21 +4,41 @@ Responsive executive dashboard for recorded marketing visits. Includes month, qu
 
 ## Public repository safety
 
-This is a fresh, code-only export, not the Replit Git history. It excludes private visit snapshots, contact and meeting data, credentials, the actual Google Sheet ID and URL, uploaded reference images, and the standalone video/design-preview artifacts and their demo media. The running Replit project is unchanged. Google Sheet links are not exposed to report viewers.
+This codebase is configured to run standalone with a Google Sheets API key. It excludes private visit snapshots, contact and meeting data, credentials, and uploaded reference images. Google Sheet links and credentials are kept server-side and are never exposed to report viewers.
 
 ## Stack
 
 Node.js 24, pnpm, TypeScript, React + Vite, Express, PostgreSQL + Drizzle, OpenAPI/Orval.
 
-## Run in Replit
+## Getting Started
 
-1. Import this repository into Replit and use pnpm to install dependencies: pnpm install --frozen-lockfile.
-2. Connect Google Sheets with an account authorized to read the original visit table. The backend uses the Replit-managed connector proxy; a plain local Node server does not provide that connector by itself.
-3. Configure DATABASE_URL and PLANTATION_SHEET_ID privately in the workspace. Never commit real values. The source sheet is read-only. The expected visit columns are documented in the backend FIELDS list.
-4. Initialize the development database with pnpm --filter @workspace/db run push.
-5. Start the artifact-managed API and dashboard workflows. Their manifests define ports and paths. The dashboard lives at / and the API at /api.
+1. Install dependencies using pnpm: `pnpm install`.
+2. Configure environment variables (create a `.env` file based on `.env.example`):
+   - `GOOGLE_API_KEY`: Google Cloud API key with access to Google Sheets API v4.
+   - `PLANTATION_SHEET_ID`: (Optional) Defaults to `1b-RY5WAl2I68iflXML9JHt70hY9nMhdYbbs0pgpfAVQ`.
+   - `DATABASE_URL`: (Optional) PostgreSQL connection string for caching report data.
+3. If PostgreSQL is configured, initialize the database schema:
+   `pnpm --filter @workspace/db run push`
+4. Start development servers:
+   - Backend API: `pnpm --filter @workspace/api-server run dev` (runs on http://localhost:5000)
+   - Frontend Dashboard: `pnpm --filter @workspace/executive-report run dev` (runs on http://localhost:3000)
 
-The public export has no bundled visit-data fallback. If the first source read fails and there is no database cache, the app fails explicitly rather than showing invented records. Later sync failures can use labeled cached data.
+## GitHub Pages Deployment
+
+This project includes automated deployment to GitHub Pages via GitHub Actions (`.github/workflows/deploy.yml`):
+
+1. **Enable GitHub Pages**:
+   - Go to your repository on GitHub: `Settings` > `Pages`.
+   - Under **Build and deployment** > **Source**, select **GitHub Actions**.
+2. **Add Secret**:
+   - Go to `Settings` > `Secrets and variables` > `Actions`.
+   - Click **New repository secret**.
+   - Name: `GOOGLE_API_KEY`
+   - Value: Your Google Cloud API key (with Google Sheets API enabled).
+3. **Deploy**:
+   - Push to `main` branch, or trigger the workflow manually from the **Actions** tab.
+   - The workflow runs, pulls the sheet data, builds the dashboard, and publishes it at:
+     `https://shinichi07700.github.io/PAT_Plantation/`
 
 ## Checks
 

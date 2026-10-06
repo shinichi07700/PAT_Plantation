@@ -1,10 +1,10 @@
-import { ReplitConnectors } from "@replit/connectors-sdk";
 import { db, reportCacheTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { GetReportDataResponse, type ReportData, type Visit } from "@workspace/api-zod";
 import { logger } from "./logger";
 
-const SHEET_ID = process.env.PLANTATION_SHEET_ID;
+const DEFAULT_SHEET_ID = "1b-RY5WAl2I68iflXML9JHt70hY9nMhdYbbs0pgpfAVQ";
+const SHEET_ID = process.env.PLANTATION_SHEET_ID || DEFAULT_SHEET_ID;
 const CACHE_KEY = "plantation-visits";
 const TTL = 5 * 60 * 1000;
 const FIELDS = ["id_trans", "date_activity", "sales_name", "pt_name", "pt_pic", "commodity",
@@ -48,27 +48,55 @@ function buildData(values: string[][], title: string, fetchedAt: string): Report
 }
 
 async function fetchSource(): Promise<ReportData> {
-  if (!SHEET_ID) throw new Error("PLANTATION_SHEET_ID must be configured.");
-  // Fresh SDK instance per sync; OAuth handling remains inside the managed proxy.
-  const connectors = new ReplitConnectors();
-  const base = `/v4/spreadsheets/${SHEET_ID}`;
-  const response = await connectors.proxy("google-sheet",
-    `${base}?fields=properties.title,sheets.properties`, { method: "GET" });
-  if (!response.ok) throw new Error(`Google Sheets metadata request failed (${response.status}).`);
+  const sheetId = SHEET_ID;
+  const apiKey = process.env.GOOGLE_API_KEY;
+  const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
+
+  if (!apiKey && !accessToken) {
+    throw new Error(
+      "GOOGLE_API_KEY (or GOOGLE_ACCESS_TOKEN) must be configured in environment variables to fetch from Google Sheets."
+    );
+  }
+
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`;
+  const headers: Record<string, string> = {};
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+
+  const keyParam = apiKey ? `key=${encodeURIComponent(apiKey)}` : "";
+
+  // 1. Fetch metadata
+  const metaUrl = `${base}?fields=properties.title,sheets.properties${keyParam ? `&${keyParam}` : ""}`;
+  const response = await fetch(metaUrl, { method: "GET", headers });
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`Google Sheets metadata request failed (${response.status}): ${errorText || response.statusText}`);
+  }
+
   const meta = await response.json() as {
     properties: { title: string };
     sheets: { properties: { sheetId: number; title: string; gridProperties: { rowCount: number } } }[];
   };
+
   const table = meta.sheets.find(sheet => sheet.properties.sheetId === 0)?.properties;
   if (!table) throw new Error("The original visit tab (gid 0) is unavailable.");
+
   const size = table.gridProperties.rowCount;
   if (!Number.isInteger(size) || size < 1 || size > 100_000) {
     throw new Error("Visit table size exceeds the supported safe read limit.");
   }
+
+  // 2. Fetch row values
   const range = `'${table.title.replace(/'/g, "''")}'!A1:L${size}`;
-  const dataResponse = await connectors.proxy("google-sheet",
-    `${base}/values/${encodeURIComponent(range)}`, { method: "GET" });
-  if (!dataResponse.ok) throw new Error(`Google Sheets values request failed (${dataResponse.status}).`);
+  const dataUrl = `${base}/values/${encodeURIComponent(range)}${keyParam ? `?${keyParam}` : ""}`;
+
+  const dataResponse = await fetch(dataUrl, { method: "GET", headers });
+  if (!dataResponse.ok) {
+    const errorText = await dataResponse.text().catch(() => "");
+    throw new Error(`Google Sheets values request failed (${dataResponse.status}): ${errorText || dataResponse.statusText}`);
+  }
+
   const data = await dataResponse.json() as { values?: string[][] };
   return buildData(data.values ?? [], meta.properties.title, new Date().toISOString());
 }
@@ -78,12 +106,18 @@ async function synchronize(): Promise<ReportData> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     const data = await fetchSource();
-    await db.insert(reportCacheTable).values({
-      key: CACHE_KEY, payload: data, fetchedAt: new Date(data.fetchedAt),
-    }).onConflictDoUpdate({
-      target: reportCacheTable.key,
-      set: { payload: data, fetchedAt: new Date(data.fetchedAt) },
-    });
+    if (db) {
+      try {
+        await db.insert(reportCacheTable).values({
+          key: CACHE_KEY, payload: data, fetchedAt: new Date(data.fetchedAt),
+        }).onConflictDoUpdate({
+          target: reportCacheTable.key,
+          set: { payload: data, fetchedAt: new Date(data.fetchedAt) },
+        });
+      } catch (err) {
+        logger.warn({ err }, "Database cache update failed");
+      }
+    }
     return data;
   })();
   try { return await inFlight; } finally { inFlight = null; }
@@ -91,14 +125,16 @@ async function synchronize(): Promise<ReportData> {
 
 export async function reportData(force = false): Promise<ReportData> {
   let cached: ReportData | null = null;
-  try {
-    const [entry] = await db.select().from(reportCacheTable).where(eq(reportCacheTable.key, CACHE_KEY));
-    if (entry) cached = GetReportDataResponse.parse(entry.payload);
-    if (!force && cached && Date.now() - Date.parse(cached.fetchedAt) < TTL) {
-      return { ...cached, today: today() };
+  if (db) {
+    try {
+      const [entry] = await db.select().from(reportCacheTable).where(eq(reportCacheTable.key, CACHE_KEY));
+      if (entry) cached = GetReportDataResponse.parse(entry.payload);
+      if (!force && cached && Date.now() - Date.parse(cached.fetchedAt) < TTL) {
+        return { ...cached, today: today() };
+      }
+    } catch {
+      logger.warn("Report cache unavailable; attempting live Sheets read");
     }
-  } catch {
-    logger.warn("Report cache unavailable; attempting live Sheets read");
   }
   try { return await synchronize(); }
   catch {

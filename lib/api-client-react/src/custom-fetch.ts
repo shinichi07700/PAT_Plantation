@@ -360,9 +360,28 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  let response: Response;
+  try {
+    response = await fetch(input, { ...init, method, headers });
+  } catch (err) {
+    if (requestInfo.url.endsWith("/api/report/data")) {
+      const fallbackUrl = `${(typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/"}data/report.json`;
+      const staticRes = await fetch(fallbackUrl).catch(() => null);
+      if (staticRes && staticRes.ok) {
+        return (await parseSuccessBody(staticRes, responseType, { method: "GET", url: fallbackUrl })) as T;
+      }
+    }
+    throw err;
+  }
 
   if (!response.ok) {
+    if ((response.status === 404 || response.status === 405) && requestInfo.url.endsWith("/api/report/data")) {
+      const fallbackUrl = `${(typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/"}data/report.json`;
+      const staticRes = await fetch(fallbackUrl).catch(() => null);
+      if (staticRes && staticRes.ok) {
+        return (await parseSuccessBody(staticRes, responseType, { method: "GET", url: fallbackUrl })) as T;
+      }
+    }
     const errorData = await parseErrorBody(response, method);
     throw new ApiError(response, errorData, requestInfo);
   }
