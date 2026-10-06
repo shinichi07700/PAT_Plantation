@@ -25,7 +25,10 @@ export const GetReportDataResponse = zod.object({
   "nextAgenda": zod.string(),
   "nextDate": zod.string(),
   "location": zod.string(),
-  "sourceRow": zod.number().int()
+  "sourceRow": zod.number().int(),
+  "photoUrl": zod.string().optional(),
+  "videoUrl": zod.string().optional(),
+  "gmapsUrl": zod.string().optional()
 })),
   "sourceTitle": zod.string(),
   "fetchedAt": zod.string(),
@@ -56,7 +59,10 @@ export const RefreshReportDataResponse = zod.object({
   "nextAgenda": zod.string(),
   "nextDate": zod.string(),
   "location": zod.string(),
-  "sourceRow": zod.number().int()
+  "sourceRow": zod.number().int(),
+  "photoUrl": zod.string().optional(),
+  "videoUrl": zod.string().optional(),
+  "gmapsUrl": zod.string().optional()
 })),
   "sourceTitle": zod.string(),
   "fetchedAt": zod.string(),

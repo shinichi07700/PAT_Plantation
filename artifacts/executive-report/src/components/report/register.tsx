@@ -4,22 +4,47 @@ import { fmtDate, normName } from '@/lib/analytics';
 import { DataTable, type Col } from './data-table';
 import { Empty, type RegFilter } from './shared';
 
+import { PhotoGallery, MediaBadges } from './photo-gallery';
+
 export function Notes({ v }: { v: Visit }) {
   return (
-    <div className="grid gap-4 text-sm md:grid-cols-[2fr_1fr]">
-      <div>
-        <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Meeting result (original)</div>
-        <p lang="id" className="mt-1 whitespace-pre-wrap leading-relaxed">{v.result || 'Blank'}</p>
-        <div className="mt-3 text-[11px] uppercase tracking-wider text-muted-foreground">Next agenda (original)</div>
-        <p lang="id" className="mt-1 whitespace-pre-wrap leading-relaxed">{v.nextAgenda || 'Blank'}</p>
+    <div className="space-y-3">
+      <div className="grid gap-4 text-sm md:grid-cols-[2fr_1fr]">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Meeting result (original)</div>
+          <p lang="id" className="mt-1 whitespace-pre-wrap leading-relaxed">{v.result || 'Blank'}</p>
+          <div className="mt-3 text-[11px] uppercase tracking-wider text-muted-foreground">Next agenda (original)</div>
+          <p lang="id" className="mt-1 whitespace-pre-wrap leading-relaxed">{v.nextAgenda || 'Blank'}</p>
+        </div>
+        <div className="space-y-3">
+          <dl className="space-y-1 text-[13px]">
+            <div><dt className="inline text-muted-foreground">Contact: </dt><dd className="inline">{v.contact || '-'}</dd></div>
+            <div><dt className="inline text-muted-foreground">Commodity: </dt><dd className="inline">{v.commodity || '-'}</dd></div>
+            <div>
+              <dt className="inline text-muted-foreground">Location: </dt>
+              <dd className="inline">
+                {v.location || '-'}
+                {v.gmapsUrl && (
+                  <a
+                    href={v.gmapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-1.5 inline-flex items-center text-xs text-primary underline underline-offset-2"
+                    title="Open location in Google Maps"
+                  >
+                    📍 Map
+                  </a>
+                )}
+              </dd>
+            </div>
+            <div><dt className="inline text-muted-foreground">Next date: </dt><dd className="inline">{v.nextDate ? `${fmtDate(v.nextDate)} (planned; completion untracked)` : 'Not recorded'}</dd></div>
+            <div><dt className="inline text-muted-foreground">Source row: </dt><dd className="inline" data-testid={`source-row-${v.id}`}>{v.sourceRow}</dd></div>
+          </dl>
+          <MediaBadges videoUrl={v.videoUrl} />
+        </div>
       </div>
-      <dl className="space-y-1 text-[13px]">
-        <div><dt className="inline text-muted-foreground">Contact: </dt><dd className="inline">{v.contact || '-'}</dd></div>
-        <div><dt className="inline text-muted-foreground">Commodity: </dt><dd className="inline">{v.commodity || '-'}</dd></div>
-        <div><dt className="inline text-muted-foreground">Location: </dt><dd className="inline">{v.location || '-'}</dd></div>
-        <div><dt className="inline text-muted-foreground">Next date: </dt><dd className="inline">{v.nextDate ? `${fmtDate(v.nextDate)} (planned; completion untracked)` : 'Not recorded'}</dd></div>
-        <div><dt className="inline text-muted-foreground">Source row: </dt><dd className="inline" data-testid={`source-row-${v.id}`}>{v.sourceRow}</dd></div>
-      </dl>
+
+      <PhotoGallery photosRaw={v.photoUrl} title={v.company} date={fmtDate(v.date)} />
     </div>
   );
 }

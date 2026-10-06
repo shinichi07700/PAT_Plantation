@@ -411,6 +411,9 @@ function buildClientLiveReportData(csvText: string): unknown {
   const header = rows[0] ?? [];
   const indexes = REPORT_FIELDS.map(key => header.indexOf(key));
   let excludedRows = 0;
+  const photoIdx = header.indexOf("photo_url");
+  const videoIdx = header.indexOf("video_url");
+  const gmapsIdx = header.indexOf("gmaps_url");
   const visits: any[] = [];
   rows.slice(1).forEach((row, i) => {
     if (!row.some(cell => String(cell).trim())) return;
@@ -430,6 +433,9 @@ function buildClientLiveReportData(csvText: string): unknown {
       nextDate: isCalendarDate(v[10]) ? v[10] : "",
       location: v[11],
       sourceRow: i + 2,
+      photoUrl: photoIdx >= 0 ? String(row[photoIdx] ?? "").trim() : "",
+      videoUrl: videoIdx >= 0 ? String(row[videoIdx] ?? "").trim() : "",
+      gmapsUrl: gmapsIdx >= 0 ? String(row[gmapsIdx] ?? "").trim() : "",
     });
   });
   visits.sort((a, b) => b.date.localeCompare(a.date) || b.sourceRow - a.sourceRow);

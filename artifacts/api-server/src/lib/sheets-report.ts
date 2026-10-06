@@ -27,6 +27,9 @@ function buildData(values: string[][], title: string, fetchedAt: string): Report
   const indexes = FIELDS.map(key => header.indexOf(key));
   if (indexes.some(index => index < 0)) throw new Error("Sheet columns changed: required visit fields are missing.");
   let excludedRows = 0;
+  const photoIdx = header.indexOf("photo_url");
+  const videoIdx = header.indexOf("video_url");
+  const gmapsIdx = header.indexOf("gmaps_url");
   const visits: Visit[] = [];
   values.slice(1).forEach((row, i) => {
     if (!row.some(cell => String(cell).trim())) return;
@@ -37,6 +40,9 @@ function buildData(values: string[][], title: string, fetchedAt: string): Report
       contact: v[4], commodity: v[5], activityType: v[6], result: v[7], products: v[8],
       nextAgenda: v[9], nextDate: calendarDate(v[10]) ? v[10] : "",
       location: v[11], sourceRow: i + 2,
+      photoUrl: photoIdx >= 0 ? String(row[photoIdx] ?? "").trim() : "",
+      videoUrl: videoIdx >= 0 ? String(row[videoIdx] ?? "").trim() : "",
+      gmapsUrl: gmapsIdx >= 0 ? String(row[gmapsIdx] ?? "").trim() : "",
     });
   });
   visits.sort((a, b) => b.date.localeCompare(a.date) || b.sourceRow - a.sourceRow);

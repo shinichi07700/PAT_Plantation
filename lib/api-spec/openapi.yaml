@@ -65,6 +65,9 @@ components:
         nextDate: { type: string }
         location: { type: string }
         sourceRow: { type: integer }
+        photoUrl: { type: string }
+        videoUrl: { type: string }
+        gmapsUrl: { type: string }
     ReportData:
       type: object
       required: [visits, sourceTitle, fetchedAt, today, timezone, mode, syncError, coverageStart, coverageEnd, excludedRows]

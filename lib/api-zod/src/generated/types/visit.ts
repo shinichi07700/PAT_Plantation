@@ -20,4 +20,7 @@ export interface Visit {
   nextDate: string;
   location: string;
   sourceRow: number;
+  photoUrl?: string;
+  videoUrl?: string;
+  gmapsUrl?: string;
 }
