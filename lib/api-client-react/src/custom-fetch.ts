@@ -360,27 +360,145 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
+const REPORT_FIELDS = [
+  "id_trans", "date_activity", "sales_name", "pt_name", "pt_pic", "commodity",
+  "activity_type", "meeting_result", "product_list", "next_agenda", "next_date", "detail_loc"
+];
+
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
+  let insideQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentCell += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentCell.trim());
+      currentCell = "";
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') i++;
+      currentRow.push(currentCell.trim());
+      if (currentRow.length > 1 || currentRow[0] !== "") rows.push(currentRow);
+      currentRow = [];
+      currentCell = "";
+    } else {
+      currentCell += char;
+    }
+  }
+  if (currentCell || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    rows.push(currentRow);
+  }
+  return rows;
+}
+
+function buildClientLiveReportData(csvText: string): unknown {
+  const rows = parseCsv(csvText);
+  const header = rows[0] ?? [];
+  const indexes = REPORT_FIELDS.map(key => header.indexOf(key));
+  let excludedRows = 0;
+  const visits: any[] = [];
+  rows.slice(1).forEach((row, i) => {
+    if (!row.some(cell => String(cell).trim())) return;
+    const v = indexes.map(index => String(row[index] ?? "").trim());
+    if (!isCalendarDate(v[1])) { excludedRows++; return; }
+    visits.push({
+      id: v[0] || `source-row-${i + 2}`,
+      date: v[1],
+      salesName: v[2],
+      company: v[3],
+      contact: v[4],
+      commodity: v[5],
+      activityType: v[6],
+      result: v[7],
+      products: v[8],
+      nextAgenda: v[9],
+      nextDate: isCalendarDate(v[10]) ? v[10] : "",
+      location: v[11],
+      sourceRow: i + 2,
+    });
+  });
+  visits.sort((a, b) => b.date.localeCompare(a.date) || b.sourceRow - a.sourceRow);
+  const todayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+
+  return {
+    visits,
+    sourceTitle: "Plantation Report",
+    fetchedAt: new Date().toISOString(),
+    today: todayStr,
+    timezone: "Asia/Jakarta",
+    mode: "live",
+    syncError: null,
+    coverageStart: visits.at(-1)?.date ?? "",
+    coverageEnd: visits[0]?.date ?? "",
+    excludedRows,
+  };
+}
+
+async function fetchClientReportFallback<T>(): Promise<T | null> {
+  // 1. Try direct live Google Sheet CSV fetch (CORS allowed on link-shared sheets)
+  try {
+    const sheetCsvUrl = "https://docs.google.com/spreadsheets/d/1b-RY5WAl2I68iflXML9JHt70hY9nMhdYbbs0pgpfAVQ/export?format=csv&gid=0";
+    const res = await fetch(sheetCsvUrl);
+    if (res.ok) {
+      const text = await res.text();
+      const data = buildClientLiveReportData(text);
+      if (data && (data as any).visits?.length > 0) {
+        return data as T;
+      }
+    }
+  } catch {
+    // fallback to static file
+  }
+
+  // 2. Fallback to bundled report.json
+  try {
+    const base = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/";
+    const fallbackUrl = `${base}data/report.json?t=${Date.now()}`;
+    const staticRes = await fetch(fallbackUrl);
+    if (staticRes.ok) {
+      return (await staticRes.json()) as T;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+  const isReportEndpoint = requestInfo.url.endsWith("/api/report/data") || requestInfo.url.endsWith("/api/report/refresh");
+
   let response: Response;
   try {
     response = await fetch(input, { ...init, method, headers });
   } catch (err) {
-    if (requestInfo.url.endsWith("/api/report/data")) {
-      const fallbackUrl = `${(typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/"}data/report.json`;
-      const staticRes = await fetch(fallbackUrl).catch(() => null);
-      if (staticRes && staticRes.ok) {
-        return (await parseSuccessBody(staticRes, responseType, { method: "GET", url: fallbackUrl })) as T;
-      }
+    if (isReportEndpoint) {
+      const fallback = await fetchClientReportFallback<T>();
+      if (fallback) return fallback;
     }
     throw err;
   }
 
   if (!response.ok) {
-    if ((response.status === 404 || response.status === 405) && requestInfo.url.endsWith("/api/report/data")) {
-      const fallbackUrl = `${(typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/"}data/report.json`;
-      const staticRes = await fetch(fallbackUrl).catch(() => null);
-      if (staticRes && staticRes.ok) {
-        return (await parseSuccessBody(staticRes, responseType, { method: "GET", url: fallbackUrl })) as T;
-      }
+    if ((response.status === 404 || response.status === 405) && isReportEndpoint) {
+      const fallback = await fetchClientReportFallback<T>();
+      if (fallback) return fallback;
     }
     const errorData = await parseErrorBody(response, method);
     throw new ApiError(response, errorData, requestInfo);
