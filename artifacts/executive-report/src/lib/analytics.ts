@@ -300,7 +300,7 @@ export function computePacing(
   period: Period,
   monthlyTarget = 20
 ): PacingSummary {
-  const monthsInPeriod = period.kind.includes('Year') ? 12 : period.kind.includes('Quarter') ? 3 : 1;
+  const monthsInPeriod = period.key.startsWith('year') ? 12 : period.key.startsWith('quarter') ? 3 : 1;
   const periodTarget = monthlyTarget * monthsInPeriod;
   const totalPeriodDays = Math.max(1, toN(period.nominalEnd) - toN(period.cur.start) + 1);
   const elapsedDays = Math.max(1, toN(period.cur.end) - toN(period.cur.start) + 1);

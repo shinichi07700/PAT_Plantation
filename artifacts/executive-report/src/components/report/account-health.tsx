@@ -168,7 +168,12 @@ export function AccountHealthPanel({
       )}.`}
       id="account-health"
     >
-      <div className="space-y-4">
+      {a.period.curCov === 'none' ? (
+        <p className="rounded border border-dashed border-border p-4 text-xs text-muted-foreground">
+          Selected period lies outside recorded source coverage. Account health status is unknown, not zero.
+        </p>
+      ) : (
+        <div className="space-y-4">
         {/* KPI Banner */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-md border border-border/70 bg-card p-3">
@@ -329,6 +334,7 @@ export function AccountHealthPanel({
           minW={740}
         />
       </div>
+      )}
     </Panel>
   );
 }
