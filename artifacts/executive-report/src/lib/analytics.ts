@@ -266,6 +266,221 @@ export interface ScheduleAnalysis {
   overdueWithoutReport: ScheduledVisitItem[];
 }
 
+/* ---------- pacing & cadence ---------- */
+export interface RepCadence {
+  rep: string;
+  visits: number;
+  prevVisits: number;
+  activeDays: number;
+  visitsPerActiveDay: number;
+  expectedPace: number;
+  pacingPct: number;
+  status: 'ahead' | 'on_track' | 'behind';
+  accountsVisited: number;
+}
+
+export interface PacingSummary {
+  monthlyTarget: number;
+  periodTarget: number;
+  elapsedDays: number;
+  totalPeriodDays: number;
+  elapsedRatio: number;
+  expectedVisitsPerRep: number;
+  activeRepsCount: number;
+  totalTeamActual: number;
+  totalTeamTarget: number;
+  teamPacingPct: number;
+  teamStatus: 'ahead' | 'on_track' | 'behind';
+  reps: RepCadence[];
+}
+
+export function computePacing(
+  curVisits: Visit[],
+  reps: { label: string; n: number; prev: number; companies: number }[],
+  period: Period,
+  monthlyTarget = 20
+): PacingSummary {
+  const monthsInPeriod = period.kind.includes('Year') ? 12 : period.kind.includes('Quarter') ? 3 : 1;
+  const periodTarget = monthlyTarget * monthsInPeriod;
+  const totalPeriodDays = Math.max(1, toN(period.nominalEnd) - toN(period.cur.start) + 1);
+  const elapsedDays = Math.max(1, toN(period.cur.end) - toN(period.cur.start) + 1);
+  const elapsedRatio = period.inProgress ? Math.min(1, Math.max(0.01, elapsedDays / totalPeriodDays)) : 1;
+  const expectedPace = Math.max(1, Math.round(periodTarget * elapsedRatio));
+
+  const repCadences: RepCadence[] = reps.map((r) => {
+    const repVisits = curVisits.filter((v) => normName(v.salesName) === normName(r.label));
+    const activeDays = new Set(repVisits.map((v) => iso(v.date))).size;
+    const visitsPerActiveDay = activeDays > 0 ? +(r.n / activeDays).toFixed(1) : 0;
+    const pacingPct = expectedPace > 0 ? Math.round((r.n / expectedPace) * 100) : 100;
+    const status: 'ahead' | 'on_track' | 'behind' =
+      r.n >= Math.round(expectedPace * 1.1) ? 'ahead' :
+      r.n >= Math.round(expectedPace * 0.8) ? 'on_track' : 'behind';
+    return {
+      rep: r.label,
+      visits: r.n,
+      prevVisits: r.prev,
+      activeDays,
+      visitsPerActiveDay,
+      expectedPace,
+      pacingPct,
+      status,
+      accountsVisited: r.companies,
+    };
+  });
+
+  const activeRepsCount = reps.filter((r) => r.n > 0).length || 1;
+  const totalTeamActual = curVisits.length;
+  const totalTeamTarget = expectedPace * activeRepsCount;
+  const teamPacingPct = totalTeamTarget > 0 ? Math.round((totalTeamActual / totalTeamTarget) * 100) : 100;
+  const teamStatus: 'ahead' | 'on_track' | 'behind' =
+    totalTeamActual >= Math.round(totalTeamTarget * 1.1) ? 'ahead' :
+    totalTeamActual >= Math.round(totalTeamTarget * 0.85) ? 'on_track' : 'behind';
+
+  return {
+    monthlyTarget,
+    periodTarget,
+    elapsedDays,
+    totalPeriodDays,
+    elapsedRatio,
+    expectedVisitsPerRep: expectedPace,
+    activeRepsCount,
+    totalTeamActual,
+    totalTeamTarget,
+    teamPacingPct,
+    teamStatus,
+    reps: repCadences,
+  };
+}
+
+/* ---------- account health & dormancy ---------- */
+export interface AccountHealthItem {
+  key: string;
+  name: string;
+  tier: 'tier1' | 'tier2' | 'tier3';
+  tierLabel: string;
+  totalVisits: number;
+  windowVisits: number;
+  latest: Visit;
+  daysSinceLastVisit: number;
+  healthStatus: 'healthy' | 'cooling' | 'dormant';
+  statusLabel: string;
+  nextDate: string;
+  nextAgenda: string;
+  daysOverdue: number | null;
+}
+
+export interface AccountHealthAnalysis {
+  asOf: string;
+  totalAccounts: number;
+  tier1Count: number;
+  tier2Count: number;
+  tier3Count: number;
+  singleVisitPct: number;
+  recurringCount: number;
+  healthyCount: number;
+  coolingCount: number;
+  dormantCount: number;
+  dormantKeyAccounts: AccountHealthItem[];
+  coolingAccounts: AccountHealthItem[];
+  allAccounts: AccountHealthItem[];
+}
+
+export function computeAccountHealth(
+  d: ReportData,
+  period: Period,
+  curVisits: Visit[],
+  all: Visit[]
+): AccountHealthAnalysis {
+  const asOf = minD(period.cur.end, d.today);
+  const upTo = all.filter((v) => iso(v.date) <= asOf);
+  const byAcc = new Map<string, Visit[]>();
+  for (const v of upTo) {
+    const k = normName(v.company);
+    if (k) byAcc.set(k, [...(byAcc.get(k) ?? []), v]);
+  }
+
+  const curCounts = new Map<string, number>();
+  for (const v of curVisits) {
+    const k = normName(v.company);
+    if (k) curCounts.set(k, (curCounts.get(k) ?? 0) + 1);
+  }
+
+  const items: AccountHealthItem[] = [];
+  let t1 = 0, t2 = 0, t3 = 0;
+  let healthy = 0, cooling = 0, dormant = 0;
+
+  for (const [k, vs] of byAcc) {
+    const sorted = [...vs].sort((a, b) => iso(b.date).localeCompare(iso(a.date)) || b.sourceRow - a.sourceRow);
+    const latest = sorted[0];
+    const totalVisits = vs.length;
+    const windowVisits = curCounts.get(k) ?? 0;
+    const daysSince = toN(asOf) - toN(latest.date);
+
+    const tier: AccountHealthItem['tier'] = totalVisits >= 4 ? 'tier1' : totalVisits >= 2 ? 'tier2' : 'tier3';
+    const tierLabel = tier === 'tier1' ? 'Strategic (Tier 1)' : tier === 'tier2' ? 'Growing (Tier 2)' : 'Prospect (Tier 3)';
+    if (tier === 'tier1') t1++;
+    else if (tier === 'tier2') t2++;
+    else t3++;
+
+    const healthStatus: AccountHealthItem['healthStatus'] = daysSince <= 30 ? 'healthy' : daysSince <= 60 ? 'cooling' : 'dormant';
+    const statusLabel = healthStatus === 'healthy' ? 'Active (≤30d)' : healthStatus === 'cooling' ? 'Cooling (31-60d)' : 'Dormant (>60d)';
+    if (healthStatus === 'healthy') healthy++;
+    else if (healthStatus === 'cooling') cooling++;
+    else dormant++;
+
+    const nd = iso(latest.nextDate);
+    const daysOverdue = validDate(nd) && nd < d.today ? toN(d.today) - toN(nd) : null;
+
+    items.push({
+      key: k,
+      name: cleanName(latest.company),
+      tier,
+      tierLabel,
+      totalVisits,
+      windowVisits,
+      latest,
+      daysSinceLastVisit: daysSince,
+      healthStatus,
+      statusLabel,
+      nextDate: nd,
+      nextAgenda: latest.nextAgenda || '',
+      daysOverdue,
+    });
+  }
+
+  items.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier.localeCompare(b.tier);
+    return b.totalVisits - a.totalVisits || b.daysSinceLastVisit - a.daysSinceLastVisit;
+  });
+
+  const dormantKeyAccounts = items
+    .filter((x) => x.tier !== 'tier3' && x.healthStatus === 'dormant')
+    .sort((a, b) => b.totalVisits - a.totalVisits || b.daysSinceLastVisit - a.daysSinceLastVisit);
+
+  const coolingAccounts = items
+    .filter((x) => x.healthStatus === 'cooling')
+    .sort((a, b) => b.totalVisits - a.totalVisits || b.daysSinceLastVisit - a.daysSinceLastVisit);
+
+  const totalAccounts = items.length;
+  const singleVisitPct = totalAccounts > 0 ? Math.round((t3 / totalAccounts) * 100) : 0;
+
+  return {
+    asOf,
+    totalAccounts,
+    tier1Count: t1,
+    tier2Count: t2,
+    tier3Count: t3,
+    singleVisitPct,
+    recurringCount: t1 + t2,
+    healthyCount: healthy,
+    coolingCount: cooling,
+    dormantCount: dormant,
+    dormantKeyAccounts,
+    coolingAccounts,
+    allAccounts: items,
+  };
+}
+
 /* ---------- full analysis ---------- */
 export interface Analysis {
   period: Period; curVisits: Visit[]; prevVisits: Visit[]; m: Metrics; pm: Metrics;
@@ -279,6 +494,8 @@ export interface Analysis {
   quality: { blankProducts: number; blankNextDate: number; elapsedAccounts: number; mergedVariants: number };
   exceptions: RecordedExceptions;
   schedule: ScheduleAnalysis;
+  pacing: PacingSummary;
+  accountHealth: AccountHealthAnalysis;
 }
 
 export function analyze(d: ReportData, sel: Sel, evidence?: ReportingEvidence): Analysis {
@@ -420,5 +637,13 @@ export function analyze(d: ReportData, sel: Sel, evidence?: ReportingEvidence): 
     overdueWithoutReport: overdueSchedule,
   };
 
-  return { period, curVisits, prevVisits, m, pm, deltas, trend, monthly, mix, reps, accounts, risks, opps, keypoints: kp, recommendations: rec, exceptions, schedule, quality: { blankProducts, blankNextDate, elapsedAccounts, mergedVariants } };
+  const pacing = computePacing(curVisits, reps, period, 20);
+  const accountHealth = computeAccountHealth(d, period, curVisits, all);
+
+  if (accountHealth.dormantKeyAccounts.length > 0) {
+    const topDormant = accountHealth.dormantKeyAccounts.slice(0, 3).map((a) => `${a.name} (${a.totalVisits} visits, ${a.daysSinceLastVisit}d silent)`).join(', ');
+    rec.unshift(`Re-engage ${accountHealth.dormantKeyAccounts.length} dormant key accounts (≥2 visits historically, but >60 days without visit as of ${fmtDate(accountHealth.asOf)}): ${topDormant}.`);
+  }
+
+  return { period, curVisits, prevVisits, m, pm, deltas, trend, monthly, mix, reps, accounts, risks, opps, keypoints: kp, recommendations: rec, exceptions, schedule, pacing, accountHealth, quality: { blankProducts, blankNextDate, elapsedAccounts, mergedVariants } };
 }

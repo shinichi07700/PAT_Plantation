@@ -4,28 +4,89 @@ import { Panel, type ViewId } from './shared';
 
 export function ReadFirst({ a, go }: { a: Analysis; go: (v: ViewId) => void }) {
   const e = a.exceptions;
+  const p = a.pacing;
+  const h = a.accountHealth;
   const cards = [
-    { id: 'activity', title: 'Recorded activity', text: a.period.curCov === 'none'
-      ? 'Unavailable: selected dates lie outside the recorded span. This is not zero performance.'
-      : `${a.m.activities} activities · ${a.m.companies} accounts · ${a.m.reps} active reps. ${deltaText(a.deltas.activities)} vs prior window.` },
-    { id: 'account-gaps', title: 'Visit gaps >14 days', text: e.accountGaps === null
-      ? 'Unavailable: window end is outside recorded coverage.'
-      : `${e.accountGaps.length} previously recorded accounts as of ${fmtDate(e.asOf)}. Includes accounts not visited in this window; not proof of inactivity.` },
-    { id: 'closing-gaps', title: 'Closing follow-up evidence', text: e.closingGaps === null
-      ? 'Unavailable: window end is outside recorded coverage.'
-      : `${e.closingGaps.length} Closing-labelled accounts in this window have no later same-account visit recorded by ${fmtDate(e.asOf)}. Not verified sales or unfinished actions.` },
-    { id: 'rep-gaps', title: 'Weekly rep activity gaps', text: e.repGaps === null
-      ? e.repReason
-      : `${new Set(e.repGaps.map((x) => x.rep)).size} expected reps have a week with no recorded activity (${e.repGaps.length} rep-weeks). Confirmed-complete weeks only.` },
-    { id: 'limits', title: 'Before drawing conclusions', text: 'Recorded dates do not guarantee all visits were logged. Passed planned dates do not prove unfinished work. Labels are not a conversion funnel.' },
+    {
+      id: 'activity',
+      title: 'Recorded activity',
+      text: a.period.curCov === 'none'
+        ? 'Unavailable: selected dates lie outside the recorded span. This is not zero performance.'
+        : `${a.m.activities} activities · ${a.m.companies} accounts · ${a.m.reps} active reps. ${deltaText(a.deltas.activities)} vs prior window.`,
+    },
+    {
+      id: 'target-pacing',
+      title: 'Target pacing',
+      text: a.period.curCov === 'none'
+        ? 'Unavailable outside coverage span.'
+        : `${p.teamPacingPct}% team pace (${p.totalTeamActual} of ${p.totalTeamTarget} expected visits). Status: ${p.teamStatus.replace('_', ' ')}.`,
+      action: () => go('reps'),
+      actionLabel: 'View sales pacing',
+    },
+    {
+      id: 'account-dormancy',
+      title: 'Key account dormancy',
+      text: `${h.dormantKeyAccounts.length} dormant key accounts (≥2 visits, silent >60d). ${h.coolingCount} accounts cooling down (31–60d).`,
+      action: () => go('companies'),
+      actionLabel: 'View account health',
+    },
+    {
+      id: 'closing-gaps',
+      title: 'Closing follow-up',
+      text: e.closingGaps === null
+        ? 'Unavailable: window end is outside recorded coverage.'
+        : `${e.closingGaps.length} Closing-labelled accounts have no later same-account visit recorded by ${fmtDate(e.asOf)}.`,
+    },
+    {
+      id: 'account-gaps',
+      title: 'Visit gaps >14 days',
+      text: e.accountGaps === null
+        ? 'Unavailable: window end is outside recorded coverage.'
+        : `${e.accountGaps.length} previously recorded accounts as of ${fmtDate(e.asOf)}. Not proof of inactivity.`,
+    },
+    {
+      id: 'limits',
+      title: 'Before conclusions',
+      text: 'Recorded dates do not guarantee all visits were logged. Passed dates do not prove unfinished work. Labels are not a conversion funnel.',
+    },
   ];
   return (
-    <Panel title="Read first" note="Selected window; recorded-evidence review, not performance verdicts." id="read-first"
-      action={<button onClick={() => go('brief')} className="min-h-11 text-xs text-primary underline underline-offset-4 sm:min-h-0" data-testid="link-brief">Open board brief & exceptions</button>}>
-      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" data-testid="list-teaser">
-        {cards.map((c) => <li key={c.id} className="min-w-0 rounded border border-border border-t-2 border-t-primary p-3" data-testid={`card-priority-${c.id}`}>
-          <h3 className="text-xs font-semibold">{c.title}</h3><p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{c.text}</p>
-        </li>)}
+    <Panel
+      title="Read first"
+      note="Selected window; operational benchmarks, cadence pacing and recorded exceptions."
+      id="read-first"
+      action={
+        <button
+          onClick={() => go('brief')}
+          className="min-h-11 text-xs text-primary underline underline-offset-4 sm:min-h-0"
+          data-testid="link-brief"
+        >
+          Open board brief & exceptions
+        </button>
+      }
+    >
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" data-testid="list-teaser">
+        {cards.map((c) => (
+          <li
+            key={c.id}
+            className="flex min-w-0 flex-col justify-between rounded border border-border border-t-2 border-t-primary p-3"
+            data-testid={`card-priority-${c.id}`}
+          >
+            <div>
+              <h3 className="text-xs font-semibold">{c.title}</h3>
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{c.text}</p>
+            </div>
+            {c.action && (
+              <button
+                type="button"
+                onClick={c.action}
+                className="mt-2 text-left text-[11px] font-medium text-primary hover:underline"
+              >
+                {c.actionLabel} &rarr;
+              </button>
+            )}
+          </li>
+        ))}
       </ul>
     </Panel>
   );

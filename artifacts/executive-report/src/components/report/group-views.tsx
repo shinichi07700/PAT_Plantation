@@ -7,6 +7,9 @@ import { AccountsReview } from './brief';
 import { CompanyTable, MixDonut, RepTable } from './overview';
 import type { ReportData } from '@workspace/api-client-react';
 
+import { PacingCadencePanel } from './pacing-cadence';
+import { AccountHealthPanel } from './account-health';
+
 export function RepsView({ a, drill, printAll }: { a: Analysis; drill: Drill; printAll?: boolean }) {
   const noPrev = a.period.prevCov === 'none';
   const rows = a.reps.filter((r) => r.n > 0 || r.prev > 0);
@@ -21,6 +24,7 @@ export function RepsView({ a, drill, printAll }: { a: Analysis; drill: Drill; pr
   ];
   return (
     <div className="space-y-4">
+      <PacingCadencePanel a={a} drill={drill} printAll={printAll} />
       <Panel title="Representative contribution" note="Share of recorded activity in the window. Closing is an activity label." id="reps">
         {rows.length === 0 ? <Empty id="empty-reps">No representative activity in this window.</Empty> : <DataTable rows={rows} cols={cols} rowKey={(r) => r.label} pageSize={20} printAll={printAll} initialSort={{ id: 'n', dir: 'desc' }} testid="table-reps-full" minW={620} />}
       </Panel>
@@ -35,6 +39,7 @@ export function RepsView({ a, drill, printAll }: { a: Analysis; drill: Drill; pr
 export function CompaniesView({ a, data, drill, printAll }: { a: Analysis; data: ReportData; drill: Drill; printAll?: boolean }) {
   return (
     <div className="space-y-4">
+      <AccountHealthPanel a={a} drill={drill} printAll={printAll} />
       <Panel title="Company ranking" note="Recorded activities per account in the window." id="companies"><CompanyTable a={a} drill={drill} pageSize={15} printAll={printAll} extra /></Panel>
       <AccountsReview a={a} today={data.today} printAll={printAll} />
     </div>
